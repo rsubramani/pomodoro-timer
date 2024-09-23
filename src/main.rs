@@ -1,18 +1,30 @@
-// src/main.rs
-
-use clap::{Parser, Subcommand};
 use crossterm::{
-    event::{self, Event as CEvent, KeyCode},
-    style::{Color, Stylize},
-    terminal, ExecutableCommand,
+    event::{self, DisableMouseCapture, EnableMouseCapture, Event as CEvent, KeyCode},
+    execute,
+    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
+    style::{Color, Stylize}, // Added Stylize here for blue() and cyan()
 };
 use serde::{Deserialize, Serialize};
 use std::{
     fs,
-    io::{stdout, Write},
+    io::{self, stdout, BufReader},
+    time::Duration,
 };
-use tokio::{self, time::{sleep, Duration}};
+use tui::{
+    backend::{Backend, CrosstermBackend},
+    layout::{Constraint, Direction, Layout},
+    style::{Style, Color as TuiColor},  // Alias Tui's Color to TuiColor
+    widgets::{Block, Borders, Gauge, Paragraph, Wrap},
+    text::{Span, Spans},
+    Terminal,
+};
+
+use clap::{Parser, Subcommand};
+use tokio::time::sleep;
 use chrono::Local;
+use rodio::{Decoder, OutputStream, Sink};
+use std::fs::File;
+
 
 #[derive(Subcommand)]
 enum Commands {
@@ -35,6 +47,24 @@ struct Cli {
     command: Option<Commands>,
 }
 
+struct AppState {
+    remaining_time: u64,
+    total_time: u64,
+}
+
+impl AppState {
+    fn progress(&self) -> f64 {
+        (self.total_time - self.remaining_time) as f64 / self.total_time as f64
+    }
+}
+
+// Session logging struct
+#[derive(Serialize, Deserialize)]
+struct SessionLog {
+    date: String,
+    work_sessions: u32,
+}
+
 #[tokio::main]
 async fn main() {
     let cli = Cli::parse();
@@ -51,78 +81,75 @@ async fn main() {
     }
 }
 
-use crossterm::style::{Color, Stylize};
-
-use crossterm::terminal::{Clear, ClearType};
-
 async fn start_pomodoro(work_duration: u64, break_duration: u64) {
-    loop {
-        // Clear the terminal before the work session starts
-        stdout().execute(Clear(ClearType::All)).unwrap();
-        println!("\n{}", "Starting Work Session".green());
-        countdown_timer(work_duration * 60, "Work").await;
+    // Setup terminal
+    enable_raw_mode().unwrap();
+    let mut stdout = stdout();
+    execute!(stdout, EnterAlternateScreen, EnableMouseCapture).unwrap();
+    let backend = CrosstermBackend::new(stdout);
+    let mut terminal = Terminal::new(backend).unwrap();
 
-        println!("\n{}", "Work session completed! Time for a break.".yellow());
-        log_session().expect("Failed to log session");
+    let total_time = work_duration * 60;
+    let app_state = AppState {
+        remaining_time: total_time,
+        total_time,
+    };
 
-        // Clear the terminal before the break starts
-        stdout().execute(Clear(ClearType::All)).unwrap();
-        println!("{}", "Starting Break".blue());
-        countdown_timer(break_duration * 60, "Break").await;
+    // Run the Pomodoro timer UI
+    run_app(&mut terminal, app_state).await;
 
-        println!("{}", "Break over! Ready for the next session.".cyan());
-    }
+    // Restore terminal
+    disable_raw_mode().unwrap();
+    execute!(terminal.backend_mut(), LeaveAlternateScreen, DisableMouseCapture).unwrap();
+    terminal.show_cursor().unwrap();
+
+    // After work session ends, log it and start the break
+    log_session().expect("Failed to log session");
+    println!("{}", "Starting Break".blue());
+
+    // Start break
+    let total_break_time = break_duration * 60;
+    let break_app_state = AppState {
+        remaining_time: total_break_time,
+        total_time: total_break_time,
+    };
+    run_app(&mut terminal, break_app_state).await;
+
+    println!("{}", "Break over! Ready for the next session.".cyan());
 }
 
-
-async fn countdown_timer(mut total_seconds: u64, session_type: &str) {
-    let mut stdout = stdout();
-
-    stdout.execute(terminal::EnterAlternateScreen).unwrap();
-    terminal::enable_raw_mode().unwrap();
-
-    let total_time = total_seconds;
-    let spinner = vec!['-', '\\', '|', '/'];
-
+async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app_state: AppState) -> io::Result<()> {
     loop {
-        // Calculate remaining time
-        let minutes = total_seconds / 60;
-        let seconds = total_seconds % 60;
+        terminal.draw(|f| {
+            let chunks = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([Constraint::Percentage(80), Constraint::Percentage(20)].as_ref())
+                .split(f.size());
 
-        // Calculate progress percentage
-        let percentage_done = ((total_time - total_seconds) as f64 / total_time as f64) * 100.0;
-        let bar_width = 30;
-        let progress = (percentage_done / 100.0 * bar_width as f64).round() as usize;
+            let gauge = Gauge::default()
+                .block(Block::default().borders(Borders::ALL).title("Pomodoro Timer"))
+                .gauge_style(
+                    Style::default()
+                        .fg(TuiColor::Green)
+                        .bg(TuiColor::Black)
+                        .add_modifier(tui::style::Modifier::BOLD),
+                )
+                .label(format!("{:.2}%", app_state.progress() * 100.0))
+                .ratio(app_state.progress());
 
-        // Spinner animation
-        let spinner_symbol = spinner[(total_time - total_seconds) as usize % spinner.len()];
+            f.render_widget(gauge, chunks[0]);
+            render_timer(f, app_state.remaining_time, chunks[1]);
+        })?;
 
-        // Display progress bar and spinner
-        let progress_bar = format!(
-            "[{}{}] {}",
-            "=".repeat(progress),
-            " ".repeat(bar_width - progress),
-            spinner_symbol
-        );
-
-        // Display countdown with progress bar and spinner
-        print!(
-            "\r{} Time Remaining: {:02}:{:02}  {}  [Press 'p' to pause, 'q' to quit]",
-            session_type.green(),
-            minutes,
-            seconds,
-            progress_bar
-        );
-        stdout.flush().unwrap();
-
-        // Check for user input
-        if event::poll(Duration::from_millis(100)).unwrap() {
-            if let CEvent::Key(key_event) = event::read().unwrap() {
+        // Poll for user input (pause, resume, quit)
+        if crossterm::event::poll(Duration::from_millis(100))? {
+            if let CEvent::Key(key_event) = event::read()? {
                 match key_event.code {
+                    KeyCode::Char('q') => break,
                     KeyCode::Char('p') => {
-                        println!("\nPaused. Press 'r' to resume.");
+                        println!("Paused. Press 'r' to resume.");
                         loop {
-                            if let CEvent::Key(resume_key_event) = event::read().unwrap() {
+                            if let CEvent::Key(resume_key_event) = event::read()? {
                                 if resume_key_event.code == KeyCode::Char('r') {
                                     println!("Resuming...");
                                     break;
@@ -133,39 +160,42 @@ async fn countdown_timer(mut total_seconds: u64, session_type: &str) {
                             }
                         }
                     }
-                    KeyCode::Char('q') => {
-                        cleanup_terminal();
-                        std::process::exit(0);
-                    }
                     _ => {}
                 }
             }
         }
 
-        // Wait for one second
-        sleep(Duration::from_secs(1)).await;
-
-        if total_seconds == 0 {
+        // Decrease remaining time and update the UI
+        if app_state.remaining_time > 0 {
+            app_state.remaining_time -= 1;
+        } else {
             break;
         }
-        total_seconds -= 1;
+
+        sleep(Duration::from_secs(1)).await;
     }
 
-    cleanup_terminal();
+    Ok(())
 }
 
+// Render the timer in mm:ss format
+fn render_timer<B: Backend>(f: &mut tui::Frame<B>, remaining_time: u64, area: tui::layout::Rect) {
+    let minutes = remaining_time / 60;
+    let seconds = remaining_time % 60;
 
-fn cleanup_terminal() {
-    terminal::disable_raw_mode().unwrap();
-    stdout().execute(terminal::LeaveAlternateScreen).unwrap();
+    let text = vec![
+        Spans::from(vec![Span::raw("Time Remaining: ")]),
+        Spans::from(vec![Span::styled(
+            format!("{:02}:{:02}", minutes, seconds),
+            Style::default().fg(TuiColor::Cyan),
+        )]),
+    ];
+
+    let paragraph = Paragraph::new(text).wrap(Wrap { trim: false });
+    f.render_widget(paragraph, area);
 }
 
-#[derive(Serialize, Deserialize)]
-struct SessionLog {
-    date: String,
-    work_sessions: u32,
-}
-
+// Log completed Pomodoro sessions
 fn log_session() -> Result<(), Box<dyn std::error::Error>> {
     let log_file = "session_log.json";
     let today = Local::now().format("%Y-%m-%d").to_string();
@@ -189,6 +219,7 @@ fn log_session() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+// Display session stats from log
 fn display_stats() -> Result<(), Box<dyn std::error::Error>> {
     let log_file = "session_log.json";
     if let Ok(data) = fs::read_to_string(log_file) {
@@ -204,20 +235,21 @@ fn display_stats() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-use rodio::{Decoder, OutputStream, Sink};
-use std::io::BufReader;
-use std::fs::File;
-
+// Play a sound when a session is completed
 fn play_sound() {
     if let Ok((_stream, stream_handle)) = OutputStream::try_default() {
         let sink = Sink::try_new(&stream_handle).unwrap();
-
         let file = BufReader::new(File::open("alarm_sound.mp3").unwrap());
         let source = Decoder::new(file).unwrap();
-
         sink.append(source);
         sink.sleep_until_end();
     } else {
         eprintln!("Audio output device not available.");
     }
+}
+
+// Clean up the terminal
+fn cleanup_terminal() {
+    disable_raw_mode().unwrap();
+    execute!(stdout(), LeaveAlternateScreen, DisableMouseCapture).unwrap();
 }

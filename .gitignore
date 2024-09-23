@@ -4,6 +4,7 @@
 
 /Cargo.lock
 .vscode/
+session_log.json
 
 # Mac OS specific files
 .DS_Store
