@@ -51,20 +51,29 @@ async fn main() {
     }
 }
 
+use crossterm::style::{Color, Stylize};
+
+use crossterm::terminal::{Clear, ClearType};
+
 async fn start_pomodoro(work_duration: u64, break_duration: u64) {
     loop {
-        println!("\nStarting work session for {} minutes...", work_duration);
+        // Clear the terminal before the work session starts
+        stdout().execute(Clear(ClearType::All)).unwrap();
+        println!("\n{}", "Starting Work Session".green());
         countdown_timer(work_duration * 60, "Work").await;
 
-        println!("\nWork session completed! Time for a break.");
+        println!("\n{}", "Work session completed! Time for a break.".yellow());
         log_session().expect("Failed to log session");
 
-        println!("Starting break for {} minutes...", break_duration);
+        // Clear the terminal before the break starts
+        stdout().execute(Clear(ClearType::All)).unwrap();
+        println!("{}", "Starting Break".blue());
         countdown_timer(break_duration * 60, "Break").await;
 
-        println!("\nBreak over! Ready for the next session.");
+        println!("{}", "Break over! Ready for the next session.".cyan());
     }
 }
+
 
 async fn countdown_timer(mut total_seconds: u64, session_type: &str) {
     let mut stdout = stdout();
@@ -72,15 +81,37 @@ async fn countdown_timer(mut total_seconds: u64, session_type: &str) {
     stdout.execute(terminal::EnterAlternateScreen).unwrap();
     terminal::enable_raw_mode().unwrap();
 
+    let total_time = total_seconds;
+    let spinner = vec!['-', '\\', '|', '/'];
+
     loop {
-        // Display the timer
+        // Calculate remaining time
         let minutes = total_seconds / 60;
         let seconds = total_seconds % 60;
+
+        // Calculate progress percentage
+        let percentage_done = ((total_time - total_seconds) as f64 / total_time as f64) * 100.0;
+        let bar_width = 30;
+        let progress = (percentage_done / 100.0 * bar_width as f64).round() as usize;
+
+        // Spinner animation
+        let spinner_symbol = spinner[(total_time - total_seconds) as usize % spinner.len()];
+
+        // Display progress bar and spinner
+        let progress_bar = format!(
+            "[{}{}] {}",
+            "=".repeat(progress),
+            " ".repeat(bar_width - progress),
+            spinner_symbol
+        );
+
+        // Display countdown with progress bar and spinner
         print!(
-            "\r{} Time Remaining: {:02}:{:02}  [Press 'p' to pause, 'q' to quit]",
+            "\r{} Time Remaining: {:02}:{:02}  {}  [Press 'p' to pause, 'q' to quit]",
             session_type.green(),
             minutes,
-            seconds
+            seconds,
+            progress_bar
         );
         stdout.flush().unwrap();
 
@@ -89,7 +120,7 @@ async fn countdown_timer(mut total_seconds: u64, session_type: &str) {
             if let CEvent::Key(key_event) = event::read().unwrap() {
                 match key_event.code {
                     KeyCode::Char('p') => {
-                        println!("\nPaused. Press 'r' to resume, 'q' to quit.");
+                        println!("\nPaused. Press 'r' to resume.");
                         loop {
                             if let CEvent::Key(resume_key_event) = event::read().unwrap() {
                                 if resume_key_event.code == KeyCode::Char('r') {
@@ -115,7 +146,6 @@ async fn countdown_timer(mut total_seconds: u64, session_type: &str) {
         sleep(Duration::from_secs(1)).await;
 
         if total_seconds == 0 {
-            play_sound();
             break;
         }
         total_seconds -= 1;
@@ -123,6 +153,7 @@ async fn countdown_timer(mut total_seconds: u64, session_type: &str) {
 
     cleanup_terminal();
 }
+
 
 fn cleanup_terminal() {
     terminal::disable_raw_mode().unwrap();
