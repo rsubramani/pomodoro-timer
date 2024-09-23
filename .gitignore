@@ -1,0 +1,9 @@
+# Binaries for programs and test files
+/target
+**/*.rs.bk
+
+/Cargo.lock
+.vscode/
+
+# Mac OS specific files
+.DS_Store
