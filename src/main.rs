@@ -2,7 +2,7 @@ use crossterm::{
     event::{self, DisableMouseCapture, EnableMouseCapture, Event as CEvent, KeyCode},
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
-    style::{Color, Stylize}, // Added Stylize here for blue() and cyan()
+    style::Stylize, // Added Stylize here for blue() and cyan()
 };
 use serde::{Deserialize, Serialize};
 use std::{
@@ -96,7 +96,7 @@ async fn start_pomodoro(work_duration: u64, break_duration: u64) {
     };
 
     // Run the Pomodoro timer UI
-    run_app(&mut terminal, app_state).await;
+    let _ = run_app(&mut terminal, app_state).await;
 
     // Restore terminal
     disable_raw_mode().unwrap();
@@ -106,6 +106,7 @@ async fn start_pomodoro(work_duration: u64, break_duration: u64) {
     // After work session ends, log it and start the break
     log_session().expect("Failed to log session");
     println!("{}", "Starting Break".blue());
+    play_sound();
 
     // Start break
     let total_break_time = break_duration * 60;
@@ -113,7 +114,7 @@ async fn start_pomodoro(work_duration: u64, break_duration: u64) {
         remaining_time: total_break_time,
         total_time: total_break_time,
     };
-    run_app(&mut terminal, break_app_state).await;
+    let _ = run_app(&mut terminal, break_app_state).await;
 
     println!("{}", "Break over! Ready for the next session.".cyan());
 }
