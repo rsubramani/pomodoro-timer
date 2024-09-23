@@ -33,14 +33,14 @@ enum Commands {
 
 #[derive(Parser)]
 #[command(name = "Pomodoro Timer")]
-#[command(author = "Your Name <you@example.com>")]
+#[command(author = "R Subramani <rsubramani@berkeley.edu>")]
 #[command(version = "1.0")]
 #[command(about = "A simple Pomodoro Timer CLI tool", long_about = None)]
 struct Cli {
     #[arg(short, long, value_name = "WORK_MINUTES", default_value = "25")]
     work: u64,
 
-    #[arg(short, long, value_name = "BREAK_MINUTES", default_value = "5")]
+    #[arg(short, long = "break", value_name = "BREAK_MINUTES", default_value = "5")]
     break_duration: u64,
 
     #[command(subcommand)]
