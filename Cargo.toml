@@ -5,10 +5,10 @@ edition = "2021"
 
 [dependencies]
 tui = "0.19.0"
-clap = { version = "4.1.6", features = ["derive"] }
-tokio = { version = "1.29.1", features = ["full"] }
 crossterm = "0.28.1"
-serde = { version = "1.0.188", features = ["derive"] }
-serde_json = "1.0.102"
-chrono = "0.4.26"
+clap = { version = "4.1.2", features = ["derive"] }
+tokio = { version = "1.40.0", features = ["full"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
 rodio = "0.17.0"
+chrono = "0.4.38"
