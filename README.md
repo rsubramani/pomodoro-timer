@@ -24,7 +24,7 @@ The **Pomodoro Timer CLI** is a command-line tool built with Rust that helps use
 1. Clone the repository:
 
     ```bash
-    git clone https://github.com/your-username/pomodoro_timer_cli.git
+    git clone https://github.com/rsubramani/pomodoro_timer_cli.git
     cd pomodoro_timer_cli
     ```
 
